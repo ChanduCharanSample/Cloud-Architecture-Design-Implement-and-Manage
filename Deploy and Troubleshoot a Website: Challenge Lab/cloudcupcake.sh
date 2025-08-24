@@ -1,43 +1,42 @@
-BLACK=`tput setaf 0`
-RED=`tput setaf 1`
-GREEN=`tput setaf 2`
-YELLOW=`tput setaf 3`
-BLUE=`tput setaf 4`
-MAGENTA=`tput setaf 5`
-CYAN=`tput setaf 6`
-WHITE=`tput setaf 7`
+#!/bin/bash
+# Automates VM creation, firewall setup, and Apache server deployment
 
-BG_BLACK=`tput setab 0`
-BG_RED=`tput setab 1`
-BG_GREEN=`tput setab 2`
-BG_YELLOW=`tput setab 3`
-BG_BLUE=`tput setab 4`
-BG_MAGENTA=`tput setab 5`
-BG_CYAN=`tput setab 6`
-BG_WHITE=`tput setab 7`
+read -p "Enter VM instance name: " VM_NAME
+read -p "Enter zone (e.g., us-west1-b): " ZONE
 
-BOLD=`tput bold`
-RESET=`tput sgr0`
-#----------------------------------------------------start--------------------------------------------------#
+echo "[1/5] Creating VM instance: $VM_NAME in zone: $ZONE..."
+gcloud compute instances create $VM_NAME \
+    --zone=$ZONE \
+    --machine-type=e2-micro \
+    --image-family=debian-11 \
+    --image-project=debian-cloud \
+    --tags=http-server \
+    --metadata=startup-script='#!/bin/bash
+        apt-get update
+        apt-get install -y apache2
+        echo "<h1>Hello World!</h1>" > /var/www/html/index.html
+        systemctl enable apache2
+        systemctl start apache2
+    '
 
-echo "${YELLOW}${BOLD}Starting${RESET}" "${GREEN}${BOLD}Execution${RESET}"
-
-gcloud compute instances create $INSTANCE --project=$DEVSHELL_PROJECT_ID --zone=$ZONE --machine-type=f1-micro --network-interface=network-tier=PREMIUM,stack-type=IPV4_ONLY,subnet=default --metadata=startup-script=sudo\ su\ -$'\n'$'\n'apt-get\ update$'\n'apt-get\ install\ apache2\ -y$'\n'$'\n'service\ --status-all$'\n',enable-oslogin=true --maintenance-policy=MIGRATE --provisioning-model=STANDARD --scopes=https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/logging.write,https://www.googleapis.com/auth/monitoring.write,https://www.googleapis.com/auth/servicecontrol,https://www.googleapis.com/auth/service.management.readonly,https://www.googleapis.com/auth/trace.append --tags=http-server,https-server --create-disk=auto-delete=yes,boot=yes,device-name=$INSTANCE,image=projects/debian-cloud/global/images/debian-12-bookworm-v20240312,mode=rw,size=10,type=projects/$DEVSHELL_PROJECT_ID/zones/$ZONE/diskTypes/pd-balanced --no-shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring --labels=goog-ec-src=vm_add-gcloud --reservation-affinity=any
-
-IP=$(gcloud compute instances list $INSTANCE --zones=$ZONE --format='value(EXTERNAL_IP)')
-
+echo "[2/5] Creating firewall rule to allow HTTP traffic..."
 gcloud compute firewall-rules create allow-http \
-    --action=ALLOW \
-    --direction=INGRESS \
+    --allow tcp:80 \
     --target-tags=http-server \
-    --source-ranges=0.0.0.0/0 \
-    --rules=tcp:80 \
-    --description="Allow incoming HTTP traffic"
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --quiet || echo "Firewall rule may already exist."
 
+echo "[3/5] Waiting for VM to start..."
 sleep 20
 
-curl http://$IP
+EXT_IP=$(gcloud compute instances describe $VM_NAME \
+    --zone=$ZONE \
+    --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
 
-echo "${RED}${BOLD}Congratulations${RESET}" "${WHITE}${BOLD}for${RESET}" "${GREEN}${BOLD}Completing the Lab !!!${RESET}"
+echo "[4/5] Testing Apache server..."
+curl -I http://$EXT_IP
 
-#-----------------------------------------------------end----------------------------------------------------------#
+echo "[5/5] Server is up! Visit: http://$EXT_IP"
+echo "Expected Output: Hello World!"
